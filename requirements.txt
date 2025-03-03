@@ -1,0 +1,10 @@
+ultralytics>=8.0.0
+opencv-python>=4.8.0
+numpy>=1.24.0
+python-dotenv>=1.0.0
+loguru>=0.7.0
+torch>=2.0.0
+torchvision>=0.15.0
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+python-telegram-bot>=20.0 

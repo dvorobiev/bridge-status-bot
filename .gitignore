@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.env
+.venv
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+.DS_Store
+.ropeproject/
+
+# Project specific
+bridge_detector_v2/temp/*
+bridge_detector_v2/output/*
+*.pt
+!bridge_detector_v2/models/best.pt
+
+# Logs
+*.log 
