@@ -136,6 +136,11 @@ class BridgeDetectorV2:
         # Запускаем обучение
         logger.info("Начало обучения модели...")
         try:
+            # Получаем следующий номер для директории с результатами
+            existing_runs = [d for d in MODELS_DIR.glob('bridge_detector*') if d.is_dir()]
+            next_run = len(existing_runs) + 1
+            run_name = f"bridge_detector{next_run}"
+            
             results = self.model.train(
                 data=str(dataset_yaml),
                 epochs=50,
@@ -143,12 +148,12 @@ class BridgeDetectorV2:
                 batch=16,
                 patience=10,
                 project=str(MODELS_DIR),
-                name="bridge_detector"
+                name=run_name
             )
             logger.info("Обучение завершено успешно")
             
             # Загружаем новую модель
-            new_model_path = MODELS_DIR / "bridge_detector" / "weights" / "best.pt"
+            new_model_path = MODELS_DIR / run_name / "weights" / "best.pt"
             if new_model_path.exists():
                 logger.info(f"Загружаем новую модель из {new_model_path}")
                 self.model = YOLO(str(new_model_path))
