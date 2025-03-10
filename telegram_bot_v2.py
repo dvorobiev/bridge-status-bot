@@ -48,7 +48,8 @@ TEMP_DIR.mkdir(parents=True, exist_ok=True)
 class BridgeDetectorV2:
     def __init__(self):
         """Инициализация детектора мостов версии 2.0"""
-        logger.info("Инициализация BridgeDetectorV2")
+        self.logger = logging.getLogger(__name__)
+        self.logger.info("Инициализация BridgeDetectorV2")
         self.model = self._load_model()
         self.camera_url = CAMERA_URL
         self.training_data = {}  # Словарь для хранения данных обучения
@@ -58,10 +59,10 @@ class BridgeDetectorV2:
         """Загрузка модели YOLO"""
         model_path = MODELS_DIR / "best.pt"
         if model_path.exists():
-            logger.info(f"Загрузка существующей модели: {model_path}")
+            self.logger.info(f"Загрузка существующей модели: {model_path}")
             return YOLO(str(model_path))
         else:
-            logger.info("Создание новой модели YOLOv8n")
+            self.logger.info("Создание новой модели YOLOv8n")
             return YOLO('yolov8n.pt')
 
     def _save_frame(self, frame, label):
@@ -95,7 +96,7 @@ class BridgeDetectorV2:
         """Включение режима обучения"""
         self.is_training_mode = True
         self.training_data = {}
-        logger.info("Режим обучения активирован")
+        self.logger.info("Режим обучения активирован")
 
     def _cleanup_old_training_dirs(self):
         """Очистка старых директорий обучения, оставляя только последнюю"""
@@ -104,9 +105,9 @@ class BridgeDetectorV2:
             for old_dir in training_dirs[:-1]:
                 try:
                     shutil.rmtree(old_dir)
-                    logger.info(f"Удалена старая директория обучения: {old_dir}")
+                    self.logger.info(f"Удалена старая директория обучения: {old_dir}")
                 except Exception as e:
-                    logger.error(f"Ошибка при удалении директории {old_dir}: {e}")
+                    self.logger.error(f"Ошибка при удалении директории {old_dir}: {e}")
 
     def stop_training_mode(self):
         """Остановка режима обучения"""
@@ -204,7 +205,7 @@ class BridgeDetectorV2:
             cap.release()
             return frame
         except Exception as e:
-            logger.error(f"Ошибка при получении кадра: {str(e)}")
+            self.logger.error(f"Ошибка при получении кадра: {str(e)}")
             return None
 
     def process_frame(self, frame, save_path=None):
@@ -233,19 +234,19 @@ class BridgeDetectorV2:
                 })
             
             # Логируем детекции для отладки
-            logger.info(f"Найдено детекций: {len(detections)}")
+            self.logger.info(f"Найдено детекций: {len(detections)}")
             for det in detections:
-                logger.info(f"Детекция: {det['class']} с уверенностью {det['confidence']:.2f}")
+                self.logger.info(f"Детекция: {det['class']} с уверенностью {det['confidence']:.2f}")
             
             # Определяем статус
             if not detections:
-                logger.warning("Детекций не найдено, статус: unknown")
+                self.logger.warning("Детекций не найдено, статус: unknown")
                 status = 'unknown'
             else:
                 # Берем детекцию с наибольшей уверенностью
                 best_detection = max(detections, key=lambda x: x['confidence'])
                 status = 'open' if best_detection['class'] == 'bridge_open' else 'closed'
-                logger.info(f"Определен статус: {status} (уверенность: {best_detection['confidence']:.2f})")
+                self.logger.info(f"Определен статус: {status} (уверенность: {best_detection['confidence']:.2f})")
             
             # Отрисовываем результаты
             for det in detections:
@@ -269,7 +270,7 @@ class BridgeDetectorV2:
             return status, frame
             
         except Exception as e:
-            logger.error(f"Ошибка при обработке кадра: {str(e)}")
+            self.logger.error(f"Ошибка при обработке кадра: {str(e)}")
             return 'unknown', frame
 
 class BridgeBot:
