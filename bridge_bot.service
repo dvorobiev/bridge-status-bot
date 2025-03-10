@@ -1,0 +1,15 @@
+[Unit]
+Description=Bridge Status Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+User=root  # Замените на вашего пользователя
+WorkingDirectory=/opt/bridge-status-bot  # Замените на путь к директории бота
+Environment=PATH=/opt/bridge-status-bot/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/opt/bridge-status-bot/.venv/bin/python telegram_bot_v2.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target 

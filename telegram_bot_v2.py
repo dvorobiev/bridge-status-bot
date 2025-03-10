@@ -12,25 +12,31 @@ import time
 from pathlib import Path
 import shutil
 import random
+import logging
+import torch
+import yaml
+from config import (
+    TELEGRAM_TOKEN,
+    CAMERA_URL,
+    CONFIDENCE_THRESHOLD,
+    IOU_THRESHOLD,
+    BASE_DIR,
+    DATASET_DIR,
+    MODELS_DIR,
+    TEMP_DIR
+)
 
-# Конфигурация
-TELEGRAM_TOKEN = "6336113851:AAGJqgNAQKYwCldn4e4vE3y7AC_FYm9taI4"
-CAMERA_URL = "https://node007.youlook.ru/cam001544/index.m3u8?token=f2d6d079b8fc54a745e085b0c34e2e08"
-CONFIDENCE_THRESHOLD = 0.4
-IOU_THRESHOLD = 0.3
+# Настройка логирования
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
-# Пути к директориям
-BASE_DIR = Path("bridge_detector_v2")
-MODELS_DIR = BASE_DIR / "models"
-DATASET_DIR = BASE_DIR / "dataset"
-TRAIN_DIR = DATASET_DIR / "train"
-VAL_DIR = DATASET_DIR / "val"
-OUTPUT_DIR = BASE_DIR / "output"
-TEMP_DIR = BASE_DIR / "temp"
-
-# Создаем все необходимые директории
-for dir_path in [MODELS_DIR, TRAIN_DIR, VAL_DIR, OUTPUT_DIR, TEMP_DIR]:
-    dir_path.mkdir(parents=True, exist_ok=True)
+# Создание необходимых директорий
+DATASET_DIR.mkdir(parents=True, exist_ok=True)
+MODELS_DIR.mkdir(parents=True, exist_ok=True)
+TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
 class BridgeDetectorV2:
     def __init__(self):
@@ -54,8 +60,8 @@ class BridgeDetectorV2:
     def _save_frame(self, frame, label):
         """Сохранение кадра для обучения"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        image_path = TRAIN_DIR / f"bridge_{timestamp}.jpg"
-        label_path = TRAIN_DIR / f"bridge_{timestamp}.txt"
+        image_path = TEMP_DIR / f"bridge_{timestamp}.jpg"
+        label_path = TEMP_DIR / f"bridge_{timestamp}.txt"
         
         # Сохраняем изображение
         cv2.imwrite(str(image_path), frame)
@@ -84,19 +90,30 @@ class BridgeDetectorV2:
         self.training_data = {}
         logger.info("Режим обучения активирован")
 
+    def _cleanup_old_training_dirs(self):
+        """Очистка старых директорий обучения, оставляя только последнюю"""
+        training_dirs = sorted([d for d in MODELS_DIR.glob('bridge_detector*') if d.is_dir()])
+        if len(training_dirs) > 1:  # Оставляем только последнюю директорию
+            for old_dir in training_dirs[:-1]:
+                try:
+                    shutil.rmtree(old_dir)
+                    logger.info(f"Удалена старая директория обучения: {old_dir}")
+                except Exception as e:
+                    logger.error(f"Ошибка при удалении директории {old_dir}: {e}")
+
     def stop_training_mode(self):
         """Выключение режима обучения и запуск обучения модели"""
         self.is_training_mode = False
         logger.info("Режим обучения деактивирован")
         
         # Получаем список всех файлов в train директории
-        train_files = list(TRAIN_DIR.glob('*.jpg'))
+        train_files = list(TEMP_DIR.glob('*.jpg'))
         if not train_files:
             logger.error("Нет данных для обучения")
             return False
             
         # Очищаем директорию валидации
-        for file in VAL_DIR.glob('*'):
+        for file in TEMP_DIR.glob('*'):
             file.unlink()
             
         # Выбираем 20% файлов для валидации
@@ -106,11 +123,11 @@ class BridgeDetectorV2:
         # Копируем выбранные файлы и их аннотации в val директорию
         for img_path in val_files:
             # Копируем изображение
-            shutil.copy2(img_path, VAL_DIR)
+            shutil.copy2(img_path, TEMP_DIR)
             # Копируем соответствующий txt файл
             txt_path = img_path.with_suffix('.txt')
             if txt_path.exists():
-                shutil.copy2(txt_path, VAL_DIR)
+                shutil.copy2(txt_path, TEMP_DIR)
         
         # Получаем абсолютный путь к директории датасета
         dataset_dir = DATASET_DIR.resolve()
@@ -128,7 +145,6 @@ class BridgeDetectorV2:
         }
         
         with open(dataset_yaml, 'w') as f:
-            import yaml
             yaml.dump(yaml_content, f)
         
         logger.info(f"Датасет подготовлен: {len(train_files)} файлов для обучения, {len(val_files)} для валидации")
@@ -160,6 +176,8 @@ class BridgeDetectorV2:
                 # Копируем лучшую модель в корень для следующих запусков
                 shutil.copy2(new_model_path, MODELS_DIR / "best.pt")
                 logger.info("Новая модель загружена и сохранена как best.pt")
+                # Очищаем старые директории
+                self._cleanup_old_training_dirs()
             else:
                 logger.error(f"Файл модели не найден по пути {new_model_path}")
                 return False
@@ -299,7 +317,7 @@ class BridgeBot:
                 return
             
             # Сохраняем результат
-            output_path = str(OUTPUT_DIR / "current_status.jpg")
+            output_path = str(TEMP_DIR / "current_status.jpg")
             status, processed_frame = self.detector.process_frame(frame, output_path)
             
             status_text = {
@@ -308,10 +326,6 @@ class BridgeBot:
                 'unknown': 'Статус неизвестен ⚠️'
             }[status]
 
-            # Сохраняем оригинальный кадр для возможного обучения
-            temp_path = str(TEMP_DIR / "status_frame.jpg")
-            cv2.imwrite(temp_path, frame)
-            
             # Создаем inline кнопки для валидации
             keyboard = [
                 [
@@ -432,7 +446,7 @@ class BridgeBot:
         if query.data.startswith("validate_correct_"):
             # Если предсказание верное, сохраняем кадр с текущей меткой
             status = query.data.replace("validate_correct_", "")
-            frame = cv2.imread(str(TEMP_DIR / "status_frame.jpg"))
+            frame = cv2.imread(str(TEMP_DIR / "current_status.jpg"))
             if frame is not None:
                 self.detector._save_frame(frame, status)
                 await query.edit_message_caption(
@@ -457,7 +471,7 @@ class BridgeBot:
         elif query.data.startswith("correct_status_"):
             # Сохраняем кадр с исправленной меткой
             correct_status = query.data.replace("correct_status_", "")
-            frame = cv2.imread(str(TEMP_DIR / "status_frame.jpg"))
+            frame = cv2.imread(str(TEMP_DIR / "current_status.jpg"))
             if frame is not None:
                 self.detector._save_frame(frame, correct_status)
                 await query.edit_message_caption(

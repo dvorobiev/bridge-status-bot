@@ -2,9 +2,11 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
 .Python
 .env
 .venv
+env/
 venv/
 ENV/
 
@@ -12,14 +14,18 @@ ENV/
 .idea/
 .vscode/
 *.swp
-.DS_Store
-.ropeproject/
+*.swo
 
 # Project specific
-bridge_detector_v2/temp/*
-bridge_detector_v2/output/*
+bridge_detector_v2/models/
+bridge_detector_v2/dataset/train/
+bridge_detector_v2/dataset/val/
+temp/
 *.pt
-!bridge_detector_v2/models/best.pt
+*.pth
+*.onnx
+*.cache
 
 # Logs
-*.log 
+*.log
+logs/ 
