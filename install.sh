@@ -24,6 +24,13 @@ source .venv/bin/activate
 # Установка зависимостей
 pip install -r requirements.txt
 
+# Создание .env файла из примера, если он не существует
+if [ ! -f .env ]; then
+    cp .env.example .env
+    echo "Создан файл .env из примера. Пожалуйста, отредактируйте его и добавьте ваши настройки."
+    exit 1
+fi
+
 # Копирование systemd сервиса
 cp bridge_bot.service /etc/systemd/system/
 

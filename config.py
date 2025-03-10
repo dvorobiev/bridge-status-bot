@@ -7,8 +7,8 @@ load_dotenv()
 
 # Настройки модели
 MODEL_PATH = "models/best.pt"  # Путь к локальной модели
-CONFIDENCE_THRESHOLD = 0.4
-IOU_THRESHOLD = 0.3
+CONFIDENCE_THRESHOLD = float(os.getenv('CONFIDENCE_THRESHOLD', 0.4))
+IOU_THRESHOLD = float(os.getenv('IOU_THRESHOLD', 0.3))
 
 # Настройки видео
 VIDEO_FPS = 30
@@ -40,8 +40,8 @@ CLASS_COLORS = {
 }
 
 # Конфигурация бота
-TELEGRAM_TOKEN = "6336113851:AAGJqgNAQKYwCldn4e4vE3y7AC_FYm9taI4"
-CAMERA_URL = "https://node007.youlook.ru/cam001544/index.m3u8?token=f2d6d079b8fc54a745e085b0c34e2e08"
+TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
+CAMERA_URL = os.getenv('CAMERA_URL')
 
 # Параметры детекции
 CONFIDENCE_THRESHOLD = 0.4
