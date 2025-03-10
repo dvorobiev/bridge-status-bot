@@ -16,15 +16,27 @@ ENV/
 *.swp
 *.swo
 
+# macOS
+.DS_Store
+**/.DS_Store
+
 # Project specific
 bridge_detector_v2/models/
 bridge_detector_v2/dataset/train/
 bridge_detector_v2/dataset/val/
+bridge_detector_v2/output/
 temp/
+output/
+screenshots/
 *.pt
 *.pth
 *.onnx
 *.cache
+*.jpg
+*.png
+*.csv
+*.yaml
+!bridge_detector_v2/dataset/bridge.yaml
 
 # Logs
 *.log
