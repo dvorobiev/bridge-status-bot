@@ -117,12 +117,23 @@ class BridgeDetectorV2:
             # Определяем следующее имя директории для результатов
             existing_dirs = [d for d in MODELS_DIR.iterdir() if d.is_dir() and d.name.startswith("bridge_detector")]
             if existing_dirs:
-                last_dir = max(existing_dirs, key=lambda x: int(x.name.split("bridge_detector")[1]))
-                last_num = int(last_dir.name.split("bridge_detector")[1])
-                run_name = f"bridge_detector{last_num + 1}"
+                # Извлекаем номера из имен директорий и находим максимальный
+                dir_numbers = []
+                for d in existing_dirs:
+                    try:
+                        num = int(d.name.split("bridge_detector")[1])
+                        dir_numbers.append(num)
+                    except (ValueError, IndexError):
+                        continue
+                
+                if dir_numbers:
+                    next_num = max(dir_numbers) + 1
+                else:
+                    next_num = 1
             else:
-                run_name = "bridge_detector1"
+                next_num = 1
             
+            run_name = f"bridge_detector{next_num}"
             self.logger.info(f"Создание директории для результатов: {run_name}")
             run_dir = MODELS_DIR / run_name
             run_dir.mkdir(parents=True, exist_ok=True)
@@ -152,6 +163,19 @@ class BridgeDetectorV2:
                             shutil.copy2(file, split_dir)
                 else:
                     self.logger.warning(f"Директория {source_dir} не найдена")
+            
+            # Создаем data.yaml файл
+            yaml_content = {
+                'path': str(dataset_dir),
+                'train': 'train',
+                'val': 'val',
+                'names': {
+                    0: 'bridge_closed',
+                    1: 'bridge_open'
+                }
+            }
+            with open(dataset_dir / "data.yaml", 'w') as f:
+                yaml.dump(yaml_content, f)
             
             # Запускаем обучение
             self.logger.info("Запуск процесса обучения...")
