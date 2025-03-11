@@ -19,12 +19,23 @@ jobs:
           chmod 600 /home/runner/.ssh/known_hosts
           ls -la /home/runner/.ssh
       
+      - name: Network debug
+        run: |
+          echo "Testing network connectivity..."
+          echo "Host info:"
+          echo "Using host: ${{ secrets.SERVER_HOST }}"
+          echo "Using username: ${{ secrets.SERVER_USER }}"
+          echo "Testing ping:"
+          ping -c 4 ${{ secrets.SERVER_HOST }} || echo "Ping error code: $?"
+          echo "Testing DNS resolution:"
+          nslookup ${{ secrets.SERVER_HOST }} || echo "NSLookup error code: $?"
+          echo "Testing port connectivity:"
+          nc -zv ${{ secrets.SERVER_HOST }} 22 || echo "Netcat error code: $?"
+      
       - name: Debug SSH connection
         run: |
           echo "Testing SSH connection..."
-          echo "Using host: ${{ secrets.SERVER_HOST }}"
-          echo "Using username: ${{ secrets.SERVER_USER }}"
-          ssh-keyscan -H ${{ secrets.SERVER_HOST }} -p 22 -T 60 >> /home/runner/.ssh/known_hosts || echo "Error code: $?"
+          ssh-keyscan -v -H ${{ secrets.SERVER_HOST }} -p 22 -T 60 >> /home/runner/.ssh/known_hosts || echo "Error code: $?"
           cat /home/runner/.ssh/known_hosts
       
       - name: Deploy to server
