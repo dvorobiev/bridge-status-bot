@@ -18,8 +18,8 @@ jobs:
           # Записываем приватный ключ в файл и выставляем права доступа
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
-          # Добавляем сервер в known_hosts (опция -H добавляет хост с хешированием)
-          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+          # Добавляем сервер в known_hosts. Если ssh-keyscan завершится ошибкой, выводим предупреждение и продолжаем
+          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts || echo "Warning: ssh-keyscan failed, continuing..."
 
       - name: Network Check
         run: |
@@ -29,11 +29,11 @@ jobs:
       - name: Deploy to server via SSH
         run: |
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_rsa -p 22 ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'EOF'
-            set -e  # Останавливаем выполнение при ошибке
+            set -e
             echo "Current directory: $PWD"
             cd /opt/bridge-status-bot || exit 1
             git pull origin main
             source .venv/bin/activate
             pip install -r requirements.txt
             sudo systemctl restart bridge_bot
-          EOF
+         EOF
