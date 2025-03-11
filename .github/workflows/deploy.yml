@@ -17,11 +17,15 @@ jobs:
           touch /home/runner/.ssh/known_hosts
           chmod 700 /home/runner/.ssh
           chmod 600 /home/runner/.ssh/known_hosts
+          ls -la /home/runner/.ssh
       
       - name: Debug SSH connection
         run: |
           echo "Testing SSH connection..."
-          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> /home/runner/.ssh/known_hosts
+          echo "Using host: ${{ secrets.SERVER_HOST }}"
+          echo "Using username: ${{ secrets.SERVER_USER }}"
+          ssh-keyscan -H ${{ secrets.SERVER_HOST }} -p 22 -T 60 >> /home/runner/.ssh/known_hosts || echo "Error code: $?"
+          cat /home/runner/.ssh/known_hosts
       
       - name: Deploy to server
         uses: appleboy/ssh-action@v1.0.0
