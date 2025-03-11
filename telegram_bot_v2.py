@@ -28,15 +28,17 @@ from config import (
 )
 
 # Настройка логирования
+log_path = Path('/opt/bridge-status-bot/logs/bot.log')
+log_path.parent.mkdir(parents=True, exist_ok=True)
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('bot.log', encoding='utf-8')
+        logging.FileHandler(str(log_path), encoding='utf-8'),
+        logging.StreamHandler()
     ]
 )
-logger = logging.getLogger(__name__)
 
 # Отключаем логи от httpx
 logging.getLogger('httpx').setLevel(logging.WARNING)
