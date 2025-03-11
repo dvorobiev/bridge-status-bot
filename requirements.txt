@@ -1,11 +1,11 @@
+numpy==1.26.3
 ultralytics>=8.0.0
-opencv-python>=4.8.0
-numpy>=1.24.0
+opencv-python-headless==4.8.1.78
 python-dotenv>=1.0.0
 loguru>=0.7.0
 --extra-index-url https://download.pytorch.org/whl/cpu
-torch>=2.0.0+cpu
-torchvision>=0.15.0+cpu
+torch==2.2.1+cpu
+torchvision==0.17.1+cpu
 requests>=2.31.0
 beautifulsoup4>=4.12.0
 python-telegram-bot>=20.0 

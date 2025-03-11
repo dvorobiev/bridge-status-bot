@@ -5,15 +5,6 @@ from pathlib import Path
 # Загрузка переменных окружения
 load_dotenv()
 
-# Настройки модели
-MODEL_PATH = MODELS_DIR / "best.pt"  # Новый путь к основной модели
-CONFIDENCE_THRESHOLD = float(os.getenv('CONFIDENCE_THRESHOLD', 0.4))
-IOU_THRESHOLD = float(os.getenv('IOU_THRESHOLD', 0.3))
-
-# Настройки видео
-VIDEO_FPS = 30
-VIDEO_FOURCC = "mp4v"
-
 # Пути к директориям
 BASE_DIR = Path(__file__).parent
 BRIDGE_DETECTOR_DIR = BASE_DIR / "bridge_detector_v2"
@@ -23,6 +14,15 @@ MODELS_DIR = BRIDGE_DETECTOR_DIR / "models"          # Все модели то�
 OUTPUT_DIR = BRIDGE_DETECTOR_DIR / "output"          # Все выходные данные здесь
 DATASET_DIR = BRIDGE_DETECTOR_DIR / "dataset"        # Все данные датасета здесь
 TEMP_DIR = BRIDGE_DETECTOR_DIR / "temp"             # Временные файлы внутри проекта
+
+# Настройки модели
+MODEL_PATH = MODELS_DIR / "best.pt"  # Путь к основной модели
+CONFIDENCE_THRESHOLD = float(os.getenv('CONFIDENCE_THRESHOLD', 0.4))
+IOU_THRESHOLD = float(os.getenv('IOU_THRESHOLD', 0.3))
+
+# Настройки видео
+VIDEO_FPS = 30
+VIDEO_FOURCC = "mp4v"
 
 # Структура датасета
 DATASET_STRUCTURE = {
