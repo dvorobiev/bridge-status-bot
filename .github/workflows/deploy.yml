@@ -36,5 +36,4 @@ jobs:
             source .venv/bin/activate
             pip install -r requirements.txt
             sudo systemctl restart bridge_bot
-EOF
-
+          EOF
