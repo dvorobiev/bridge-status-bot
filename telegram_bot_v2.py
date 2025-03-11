@@ -23,7 +23,8 @@ from config import (
     BASE_DIR,
     DATASET_DIR,
     MODELS_DIR,
-    TEMP_DIR
+    TEMP_DIR,
+    OUTPUT_DIR
 )
 
 # Настройка логирования
@@ -44,6 +45,7 @@ logging.getLogger('httpx').setLevel(logging.WARNING)
 DATASET_DIR.mkdir(parents=True, exist_ok=True)
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 class BridgeDetectorV2:
     def __init__(self):
@@ -54,6 +56,10 @@ class BridgeDetectorV2:
         self.camera_url = CAMERA_URL
         self.training_data = {}  # Словарь для хранения данных обучения
         self.is_training_mode = False  # Флаг режима обучения
+        
+        # Создаем директории для новых данных
+        self.new_data_dir = DATASET_DIR / "new_data"
+        self.new_data_dir.mkdir(parents=True, exist_ok=True)
 
     def _load_model(self):
         """Загрузка модели YOLO"""
@@ -68,8 +74,13 @@ class BridgeDetectorV2:
     def _save_frame(self, frame, label):
         """Сохранение кадра для обучения"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        image_path = TEMP_DIR / f"bridge_{timestamp}.jpg"
-        label_path = TEMP_DIR / f"bridge_{timestamp}.txt"
+        
+        # Определяем директорию для сохранения
+        save_dir = self.new_data_dir if not self.is_training_mode else DATASET_DIR / "train"
+        save_dir.mkdir(parents=True, exist_ok=True)
+        
+        image_path = save_dir / f"bridge_{timestamp}.jpg"
+        label_path = save_dir / f"bridge_{timestamp}.txt"
         
         # Сохраняем изображение
         cv2.imwrite(str(image_path), frame)
@@ -78,8 +89,6 @@ class BridgeDetectorV2:
         height, width = frame.shape[:2]
         
         # Создаем аннотацию в формате YOLO
-        # class_id x_center y_center width height
-        # Для простоты берем центр изображения и фиксированный размер
         class_id = 0 if label == 'closed' else 1  # 0 - закрыт, 1 - открыт
         x_center = 0.5  # центр по X
         y_center = 0.5  # центр по Y
@@ -109,64 +118,56 @@ class BridgeDetectorV2:
                 except Exception as e:
                     self.logger.error(f"Ошибка при удалении директории {old_dir}: {e}")
 
+    def _prepare_training_data(self):
+        """Подготовка данных для обучения"""
+        # Проверяем наличие новых данных
+        if not list(self.new_data_dir.glob("*.jpg")):
+            return
+            
+        # Создаем директории если их нет
+        train_dir = DATASET_DIR / "train"
+        val_dir = DATASET_DIR / "val"
+        train_dir.mkdir(parents=True, exist_ok=True)
+        val_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Получаем список всех файлов
+        image_files = list(self.new_data_dir.glob("*.jpg"))
+        random.shuffle(image_files)
+        
+        # Разделяем данные 80/20
+        split_idx = int(len(image_files) * 0.8)
+        train_images = image_files[:split_idx]
+        val_images = image_files[split_idx:]
+        
+        # Перемещаем файлы в соответствующие директории
+        for img_path in train_images:
+            label_path = img_path.with_suffix('.txt')
+            if label_path.exists():
+                shutil.move(str(img_path), str(train_dir / img_path.name))
+                shutil.move(str(label_path), str(train_dir / label_path.name))
+                
+        for img_path in val_images:
+            label_path = img_path.with_suffix('.txt')
+            if label_path.exists():
+                shutil.move(str(img_path), str(val_dir / img_path.name))
+                shutil.move(str(label_path), str(val_dir / label_path.name))
+
     def stop_training_mode(self):
         """Остановка режима обучения"""
         try:
             self.logger.info("Завершение режима обучения...")
             
+            # Подготовка новых данных
+            self._prepare_training_data()
+            
             # Определяем следующее имя директории для результатов
-            existing_dirs = [d for d in MODELS_DIR.iterdir() if d.is_dir() and d.name.startswith("bridge_detector")]
-            if existing_dirs:
-                # Извлекаем номера из имен директорий и находим максимальный
-                dir_numbers = []
-                for d in existing_dirs:
-                    try:
-                        num = int(d.name.split("bridge_detector")[1])
-                        dir_numbers.append(num)
-                    except (ValueError, IndexError):
-                        continue
-                
-                if dir_numbers:
-                    next_num = max(dir_numbers) + 1
-                else:
-                    next_num = 1
-            else:
-                next_num = 1
-            
-            run_name = f"bridge_detector{next_num}"
-            self.logger.info(f"Создание директории для результатов: {run_name}")
-            run_dir = MODELS_DIR / run_name
+            run_dir = OUTPUT_DIR / f"train_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            self.logger.info(f"Создание директории для результатов: {run_dir}")
             run_dir.mkdir(parents=True, exist_ok=True)
-            
-            # Копируем текущее изображение, если оно существует
-            img_path = TEMP_DIR / "current_status.jpg"
-            if img_path.exists():
-                self.logger.info(f"Копирование текущего изображения: {img_path}")
-                shutil.copy2(img_path, run_dir / "current_status.jpg")
-            else:
-                self.logger.warning(f"Файл {img_path} не найден, пропускаем копирование")
-            
-            # Копируем файлы датасета
-            self.logger.info("Копирование файлов датасета...")
-            dataset_dir = run_dir / "dataset"
-            dataset_dir.mkdir(exist_ok=True)
-            
-            # Копируем train и val директории
-            for split in ["train", "val"]:
-                split_dir = dataset_dir / split
-                split_dir.mkdir(exist_ok=True)
-                source_dir = DATASET_DIR / split
-                if source_dir.exists():
-                    self.logger.info(f"Копирование {split} данных...")
-                    for file in source_dir.glob("*"):
-                        if file.is_file():
-                            shutil.copy2(file, split_dir)
-                else:
-                    self.logger.warning(f"Директория {source_dir} не найдена")
             
             # Создаем data.yaml файл
             yaml_content = {
-                'path': str(dataset_dir),
+                'path': str(DATASET_DIR),
                 'train': 'train',
                 'val': 'val',
                 'names': {
@@ -174,26 +175,28 @@ class BridgeDetectorV2:
                     1: 'bridge_open'
                 }
             }
-            with open(dataset_dir / "data.yaml", 'w') as f:
+            
+            data_yaml_path = run_dir / "data.yaml"
+            with open(data_yaml_path, 'w') as f:
                 yaml.dump(yaml_content, f)
             
             # Запускаем обучение
             self.logger.info("Запуск процесса обучения...")
             self.model.train(
-                data=str(dataset_dir / "data.yaml"),
+                data=str(data_yaml_path),
                 epochs=100,
                 imgsz=640,
                 batch=16,
                 patience=10,
                 save=True,
                 project=str(run_dir),
-                name="weights",
+                name="train",
                 exist_ok=True
             )
             
             # Загружаем новую модель
             self.logger.info("Загрузка обученной модели...")
-            new_model_path = run_dir / "weights" / "weights" / "best.pt"
+            new_model_path = run_dir / "train" / "weights" / "best.pt"
             if not new_model_path.exists():
                 self.logger.error(f"Модель не найдена по пути: {new_model_path}")
                 return False
@@ -201,12 +204,12 @@ class BridgeDetectorV2:
             self.model = YOLO(str(new_model_path))
             self.logger.info("Модель успешно загружена")
             
-            # Копируем лучшую модель в корневую директорию
+            # Копируем лучшую модель в директорию моделей
             self.logger.info("Копирование лучшей модели...")
             shutil.copy2(new_model_path, MODELS_DIR / "best.pt")
             
-            # Очищаем старые директории обучения
-            self._cleanup_old_training_dirs()
+            # Очищаем старые результаты обучения, оставляя последние 3
+            self._cleanup_old_results()
             
             self.logger.info("Режим обучения успешно завершен")
             return True
@@ -214,6 +217,20 @@ class BridgeDetectorV2:
         except Exception as e:
             self.logger.error(f"Ошибка при завершении режима обучения: {str(e)}", exc_info=True)
             return False
+
+    def _cleanup_old_results(self):
+        """Очистка старых результатов обучения, оставляя последние 3"""
+        try:
+            train_dirs = sorted([d for d in OUTPUT_DIR.glob('train_*') if d.is_dir()])
+            if len(train_dirs) > 3:  # Оставляем только последние 3 директории
+                for old_dir in train_dirs[:-3]:
+                    try:
+                        shutil.rmtree(old_dir)
+                        self.logger.info(f"Удалена старая директория обучения: {old_dir}")
+                    except Exception as e:
+                        self.logger.error(f"Ошибка при удалении директории {old_dir}: {e}")
+        except Exception as e:
+            self.logger.error(f"Ошибка при очистке старых результатов: {e}")
 
     def get_current_frame(self):
         """Получение текущего кадра с камеры"""

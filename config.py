@@ -6,7 +6,7 @@ from pathlib import Path
 load_dotenv()
 
 # Настройки модели
-MODEL_PATH = "models/best.pt"  # Путь к локальной модели
+MODEL_PATH = MODELS_DIR / "best.pt"  # Новый путь к основной модели
 CONFIDENCE_THRESHOLD = float(os.getenv('CONFIDENCE_THRESHOLD', 0.4))
 IOU_THRESHOLD = float(os.getenv('IOU_THRESHOLD', 0.3))
 
@@ -15,9 +15,25 @@ VIDEO_FPS = 30
 VIDEO_FOURCC = "mp4v"
 
 # Пути к директориям
-SCREENSHOTS_DIR = "screenshots"
-OUTPUT_DIR = "output"
-MODELS_DIR = "models"
+BASE_DIR = Path(__file__).parent
+BRIDGE_DETECTOR_DIR = BASE_DIR / "bridge_detector_v2"
+
+# Основные директории проекта
+MODELS_DIR = BRIDGE_DETECTOR_DIR / "models"          # Все модели только здесь
+OUTPUT_DIR = BRIDGE_DETECTOR_DIR / "output"          # Все выходные данные здесь
+DATASET_DIR = BRIDGE_DETECTOR_DIR / "dataset"        # Все данные датасета здесь
+TEMP_DIR = BRIDGE_DETECTOR_DIR / "temp"             # Временные файлы внутри проекта
+
+# Структура датасета
+DATASET_STRUCTURE = {
+    "train": DATASET_DIR / "train",
+    "val": DATASET_DIR / "val",
+    "new_data": DATASET_DIR / "new_data"
+}
+
+# Создание необходимых директорий при импорте
+for dir_path in [MODELS_DIR, OUTPUT_DIR, TEMP_DIR] + list(DATASET_STRUCTURE.values()):
+    dir_path.mkdir(parents=True, exist_ok=True)
 
 # Классы для детекции
 CLASSES = [
@@ -47,8 +63,8 @@ CAMERA_URL = os.getenv('CAMERA_URL')
 CONFIDENCE_THRESHOLD = 0.4
 IOU_THRESHOLD = 0.3
 
-# Пути к директориям
-BASE_DIR = Path(__file__).parent
-DATASET_DIR = BASE_DIR / "bridge_detector_v2" / "dataset"
-MODELS_DIR = BASE_DIR / "bridge_detector_v2" / "models"
-TEMP_DIR = BASE_DIR / "temp" 
+# Удаляем устаревшие определения путей
+# SCREENSHOTS_DIR = "screenshots"  # Удалено
+# MODEL_PATH = "models/best.pt"   # Заменено на полный путь
+# MODEL_PATH = MODELS_DIR / "best.pt"  # Новый путь к основной модели
+# ... existing code ... 
