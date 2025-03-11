@@ -193,7 +193,7 @@ class BridgeDetectorV2:
             
             # Загружаем новую модель
             self.logger.info("Загрузка обученной модели...")
-            new_model_path = run_dir / "weights" / "best.pt"
+            new_model_path = run_dir / "weights" / "weights" / "best.pt"
             if not new_model_path.exists():
                 self.logger.error(f"Модель не найдена по пути: {new_model_path}")
                 return False
