@@ -18,7 +18,7 @@ TEMP_DIR = BRIDGE_DETECTOR_DIR / "temp"             # Временные фай�
 # Настройки модели
 MODEL_PATH = MODELS_DIR / "best.pt"  # Путь к основной модели
 CONFIDENCE_THRESHOLD = float(os.getenv('CONFIDENCE_THRESHOLD', 0.4))
-IOU_THRESHOLD = float(os.getenv('IOU_THRESHOLD', 0.3))
+IOU_THRESHOLD = float(os.getenv('IOU_THRESHOLD', '0.3').replace(' %', ''))
 
 # Настройки видео
 VIDEO_FPS = 30
