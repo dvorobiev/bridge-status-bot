@@ -28,7 +28,9 @@ from config import (
 )
 
 # Настройка логирования
-log_path = Path('/opt/bridge-status-bot/logs/bot.log')
+# log_path = Path('/opt/bridge-status-bot/logs/bot.log')
+
+log_path = Path('logs/bot.log')
 log_path.parent.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(
