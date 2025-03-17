@@ -45,52 +45,56 @@ class FileSystemManager:
     @staticmethod
     def setup_logging(log_path: Path, max_size_mb: int = 10, backup_count: int = 5):
         """Настройка логирования с ротацией файлов"""
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        # Настройка форматирования
-        log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-        formatter = logging.Formatter(log_format)
-        
-        # Настройка ротации файлов
-        file_handler = RotatingFileHandler(
-            str(log_path),
-            maxBytes=max_size_mb * 1024 * 1024,
-            backupCount=backup_count,
-            encoding='utf-8'
-        )
-        file_handler.setFormatter(formatter)
-        
-        # Настройка вывода в консоль
-        console_handler = logging.StreamHandler()
-        console_handler.setFormatter(formatter)
-        
-        # Настройка корневого логгера
-        root_logger = logging.getLogger()
-        root_logger.setLevel(logging.INFO)
-        root_logger.addHandler(file_handler)
-        root_logger.addHandler(console_handler)
-        
-        # Отключение лишних логов
-        logging.getLogger('httpx').setLevel(logging.WARNING)
-
-def retry_on_exception(retries: int = 3, delay: float = 1.0):
-    """Декоратор для повторных попыток выполнения функции при ошибках"""
-    def decorator(func):
-        @wraps(func)
-        async def wrapper(*args, **kwargs):
-            last_exception = None
-            for attempt in range(retries):
-                try:
-                    return await func(*args, **kwargs)
-                except Exception as e:
-                    last_exception = e
-                    logger.warning(f"Попытка {attempt + 1}/{retries} не удалась: {str(e)}")
-                    if attempt < retries - 1:
-                        await asyncio.sleep(delay * (attempt + 1))
-            logger.error(f"Все попытки исчерпаны. Последняя ошибка: {str(last_exception)}")
-            raise last_exception
-        return wrapper
-    return decorator
+        try:
+            # Используем относительный путь в текущей директории
+            log_dir = Path.cwd() / 'logs'
+            log_dir.mkdir(parents=True, exist_ok=True)
+            
+            log_file = log_dir / 'bot.log'
+            
+            # Проверяем права доступа
+            if log_dir.exists():
+                os.chmod(log_dir, 0o755)  # Устанавливаем права на директорию
+                if log_file.exists():
+                    os.chmod(log_file, 0o644)  # Устанавливаем права на файл
+            
+            # Настройка форматирования
+            log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+            formatter = logging.Formatter(log_format)
+            
+            # Настройка ротации файлов
+            file_handler = RotatingFileHandler(
+                str(log_file),
+                maxBytes=max_size_mb * 1024 * 1024,
+                backupCount=backup_count,
+                encoding='utf-8'
+            )
+            file_handler.setFormatter(formatter)
+            
+            # Настройка вывода в консоль
+            console_handler = logging.StreamHandler()
+            console_handler.setFormatter(formatter)
+            
+            # Настройка корневого логгера
+            root_logger = logging.getLogger()
+            root_logger.setLevel(logging.INFO)
+            root_logger.addHandler(file_handler)
+            root_logger.addHandler(console_handler)
+            
+            # Отключение лишних логов
+            logging.getLogger('httpx').setLevel(logging.WARNING)
+            
+        except Exception as e:
+            print(f"Ошибка при настройке логирования: {str(e)}")
+            print("Продолжаем работу только с выводом в консоль")
+            
+            # Настраиваем только консольное логирование
+            console_handler = logging.StreamHandler()
+            console_handler.setFormatter(logging.Formatter(log_format))
+            
+            root_logger = logging.getLogger()
+            root_logger.setLevel(logging.INFO)
+            root_logger.addHandler(console_handler)
 
 class ModelManager:
     """Менеджер для работы с моделями YOLO"""
@@ -303,6 +307,25 @@ class BridgeBot:
         self.detector = BridgeDetectorV3()
         self.logger = logging.getLogger(__name__)
 
+def retry_on_exception(retries: int = 3, delay: float = 1.0):
+    """Декоратор для повторных попыток выполнения функции при ошибках"""
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            last_exception = None
+            for attempt in range(retries):
+                try:
+                    return await func(*args, **kwargs)
+                except Exception as e:
+                    last_exception = e
+                    logger.warning(f"Попытка {attempt + 1}/{retries} не удалась: {str(e)}")
+                    if attempt < retries - 1:
+                        await asyncio.sleep(delay * (attempt + 1))
+            logger.error(f"Все попытки исчерпаны. Последняя ошибка: {str(last_exception)}")
+            raise last_exception
+        return wrapper
+    return decorator
+
     @retry_on_exception(retries=3, delay=1.0)
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик команды /start"""
@@ -415,7 +438,7 @@ def setup_commands(application: Application):
 async def main():
     """Основная функция"""
     try:
-        # Настройка логирования
+        # Настройка логирования с относительным путем
         FileSystemManager.setup_logging(
             Path('logs/bot.log'),
             max_size_mb=10,
