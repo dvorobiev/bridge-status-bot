@@ -312,6 +312,7 @@ class BridgeBot:
         """Обработчик команды /start"""
         keyboard = [
             [KeyboardButton("Проверить статус")],
+            [KeyboardButton("Начать обучение"), KeyboardButton("Завершить обучение")],
             [KeyboardButton("Помощь")]
         ]
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
@@ -320,18 +321,29 @@ class BridgeBot:
             "Используйте кнопки или команды:\n"
             "/status - проверить текущий статус\n"
             "/help - получить справку\n"
-            "/train - начать режим обучения\n",
+            "/train - начать режим обучения\n"
+            "/stop_train - завершить обучение\n",
             reply_markup=reply_markup
         )
 
     async def help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик команды помощи"""
         await update.message.reply_text(
-            "Доступные команды:\n"
-            "/status - проверить текущий статус моста\n"
-            "/train - начать режим обучения\n"
-            "/stop_training - закончить режим обучения\n"
-            "/help - показать это сообщение"
+            "🤖 Бот для мониторинга статуса моста v3.0\n\n"
+            "Основные команды:\n"
+            "🔍 /status - проверить текущее состояние моста\n"
+            "📚 /train - начать режим обучения\n"
+            "🎓 /stop_train - закончить обучение и обновить модель\n"
+            "❓ /help - показать это сообщение\n\n"
+            "Кнопки:\n"
+            "🔍 Проверить статус - получить текущее состояние моста\n"
+            "📚 Начать обучение - войти в режим обучения\n"
+            "🎓 Завершить обучение - закончить обучение и обновить модель\n\n"
+            "В режиме обучения:\n"
+            "1. Бот будет присылать кадры с камеры\n"
+            "2. Используйте кнопки Открыт/Закрыт для разметки\n"
+            "3. После накопления достаточного количества данных,\n"
+            "   нажмите 'Завершить обучение'"
         )
 
     async def check_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -345,6 +357,10 @@ class BridgeBot:
             # Сохраняем кадр во временную директорию
             temp_path = TEMP_DIR / f"status_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
             cv2.imwrite(str(temp_path), frame)
+            
+            # Сохраняем копию для валидации
+            current_status_path = TEMP_DIR / "current_status.jpg"
+            cv2.imwrite(str(current_status_path), frame)
 
             # Делаем предсказание
             results = self.detector.model.predict(
@@ -364,18 +380,31 @@ class BridgeBot:
                 class_id = int(classes[max_conf_idx])
                 confidence = confidences[max_conf_idx]
                 
-                status = "открыт" if class_id == 1 else "закрыт"
-                await update.message.reply_text(
-                    f"Статус моста: {status}\n"
-                    f"Уверенность: {confidence:.2%}"
-                )
+                status = "open" if class_id == 1 else "closed"
+                status_text = "открыт 🟢" if status == "open" else "закрыт 🔴"
+                
+                # Создаем inline кнопки для валидации
+                keyboard = [
+                    [
+                        InlineKeyboardButton("✅ Верно", callback_data=f"validate_correct_{status}"),
+                        InlineKeyboardButton("❌ Неверно", callback_data="validate_incorrect")
+                    ]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                
+                # Отправляем изображение с кнопками
+                with open(str(temp_path), 'rb') as photo:
+                    await update.message.reply_photo(
+                        photo=photo,
+                        caption=f"Текущий статус моста: {status_text}\nУверенность: {confidence:.2%}\n\nПожалуйста, подтвердите правильность определения:",
+                        reply_markup=reply_markup
+                    )
             else:
                 await update.message.reply_text(
                     "Не удалось определить статус моста на изображении"
                 )
-
-            # Отправляем изображение
-            await update.message.reply_photo(temp_path.open('rb'))
+                # Отправляем изображение
+                await update.message.reply_photo(temp_path.open('rb'))
 
         except Exception as e:
             self.logger.error(f"Ошибка при проверке статуса: {str(e)}")
@@ -389,10 +418,77 @@ class BridgeBot:
         """Начало режима обучения"""
         self.detector.is_training_mode = True
         await update.message.reply_text(
-            "Режим обучения активирован.\n"
-            "Теперь я буду сохранять все кадры для обучения.\n"
-            "Используйте /stop_training для завершения."
+            "Режим обучения активирован!\n"
+            "Я буду присылать кадры для разметки.\n"
+            "Используйте кнопки Открыт/Закрыт для каждого кадра."
         )
+        await self.send_frame_for_training(update.effective_message, context)
+
+    async def send_frame_for_training(self, message, context: ContextTypes.DEFAULT_TYPE):
+        """Отправка кадра для разметки"""
+        frame = await self.detector.capture_frame()
+        if frame is None:
+            await context.bot.send_message(
+                chat_id=message.chat.id,
+                text="Не удалось получить кадр с камеры"
+            )
+            return
+        
+        # Сохраняем временный файл
+        temp_path = str(TEMP_DIR / "temp_frame.jpg")
+        cv2.imwrite(temp_path, frame)
+        
+        # Создаем inline кнопки
+        keyboard = [
+            [
+                InlineKeyboardButton("Открыт", callback_data="label_open"),
+                InlineKeyboardButton("Закрыт", callback_data="label_closed")
+            ],
+            [InlineKeyboardButton("Пропустить", callback_data="skip")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        with open(temp_path, 'rb') as photo:
+            await context.bot.send_photo(
+                chat_id=message.chat.id,
+                photo=photo,
+                caption="Укажите состояние моста на кадре:",
+                reply_markup=reply_markup
+            )
+
+    async def handle_training_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработка ответов в режиме обучения"""
+        query = update.callback_query
+        await query.answer()
+        
+        # Проверяем, что это callback для режима обучения
+        if not query.data.startswith(("label_", "skip")):
+            return
+        
+        if not self.detector.is_training_mode:
+            await query.edit_message_caption(
+                caption="Режим обучения не активен"
+            )
+            return
+        
+        if query.data.startswith("label_"):
+            label = query.data.replace("label_", "")
+            
+            # Сохраняем кадр с меткой
+            frame = cv2.imread(str(TEMP_DIR / "temp_frame.jpg"))
+            if frame is not None:
+                self.detector._save_frame(frame, label)
+                await query.edit_message_caption(
+                    caption=f"Спасибо! Кадр сохранен с меткой: {label}"
+                )
+                
+                # Отправляем следующий кадр
+                await self.send_frame_for_training(query.message, context)
+        elif query.data == "skip":
+            await query.edit_message_caption(
+                caption="Кадр пропущен"
+            )
+            await self.send_frame_for_training(query.message, context)
 
     async def stop_training(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Завершение режима обучения"""
@@ -464,17 +560,60 @@ class BridgeBot:
             self.logger.error(f"Ошибка при обучении модели: {str(e)}")
             await update.message.reply_text(f"Ошибка при обучении модели: {str(e)}")
 
+    async def handle_validation_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработка валидации предсказаний"""
+        query = update.callback_query
+        await query.answer()
+        
+        if query.data.startswith("validate_correct_"):
+            # Если предсказание верное, сохраняем кадр с текущей меткой
+            status = query.data.replace("validate_correct_", "")
+            frame = cv2.imread(str(TEMP_DIR / "current_status.jpg"))
+            if frame is not None:
+                self.detector._save_frame(frame, status)
+                await query.edit_message_caption(
+                    caption=f"Спасибо за подтверждение! Кадр сохранен для обучения с меткой: {status}"
+                )
+        
+        elif query.data == "validate_incorrect":
+            # Если предсказание неверное, спрашиваем правильный статус
+            keyboard = [
+                [
+                    InlineKeyboardButton("Мост открыт", callback_data="correct_status_open"),
+                    InlineKeyboardButton("Мост закрыт", callback_data="correct_status_closed")
+                ]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_caption(
+                caption="Пожалуйста, укажите правильный статус моста:",
+                reply_markup=reply_markup
+            )
+        
+        elif query.data.startswith("correct_status_"):
+            # Сохраняем кадр с исправленной меткой
+            correct_status = query.data.replace("correct_status_", "")
+            frame = cv2.imread(str(TEMP_DIR / "current_status.jpg"))
+            if frame is not None:
+                self.detector._save_frame(frame, correct_status)
+                await query.edit_message_caption(
+                    caption=f"Спасибо за исправление! Кадр сохранен для обучения с меткой: {correct_status}"
+                )
+
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработка текстовых сообщений"""
         text = update.message.text.lower()
         if text == "проверить статус":
             await self.check_status(update, context)
+        elif text == "начать обучение":
+            await self.start_training(update, context)
+        elif text == "завершить обучение":
+            await self.stop_training(update, context)
         elif text == "помощь":
             await self.help(update, context)
         else:
             await update.message.reply_text(
-                "Извините, я не понимаю эту команду.\n"
-                "Используйте кнопки или /help для списка команд."
+                "Используйте кнопки для навигации или /help для списка команд."
             )
 
 def retry_on_exception(retries: int = 3, delay: float = 1.0):
@@ -501,10 +640,14 @@ def setup_commands(application: Application):
     bot = BridgeBot()
     application.add_handler(CommandHandler("start", bot.start))
     application.add_handler(CommandHandler("help", bot.help))
-    application.add_handler(CommandHandler("check", bot.check_status))
-    application.add_handler(CommandHandler("train_start", bot.start_training))
-    application.add_handler(CommandHandler("train_stop", bot.stop_training))
+    application.add_handler(CommandHandler("status", bot.check_status))
+    application.add_handler(CommandHandler("train", bot.start_training))
+    application.add_handler(CommandHandler("stop_train", bot.stop_training))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_message))
+    
+    # Обработчики для callback-запросов
+    application.add_handler(CallbackQueryHandler(bot.handle_training_callback, pattern="^(label_|skip)"))
+    application.add_handler(CallbackQueryHandler(bot.handle_validation_callback, pattern="^(validate_|correct_)"))
 
 async def main():
     """Основная функция"""
