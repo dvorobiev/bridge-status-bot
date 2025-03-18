@@ -1,0 +1,6 @@
+names:
+  0: bridge_closed
+  1: bridge_open
+path: /Users/dvorobiev/bridge_detect_v2/detector/models/bridge_detector8/dataset
+train: train
+val: val

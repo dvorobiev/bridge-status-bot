@@ -307,6 +307,175 @@ class BridgeBot:
         self.detector = BridgeDetectorV3()
         self.logger = logging.getLogger(__name__)
 
+    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработчик команды /start"""
+        keyboard = [
+            [KeyboardButton("Проверить статус")],
+            [KeyboardButton("Помощь")]
+        ]
+        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+        await update.message.reply_text(
+            "Привет! Я бот для определения статуса моста.\n"
+            "Используйте кнопки или команды:\n"
+            "/status - проверить текущий статус\n"
+            "/help - получить справку\n"
+            "/train - начать режим обучения\n",
+            reply_markup=reply_markup
+        )
+
+    async def help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработчик команды помощи"""
+        await update.message.reply_text(
+            "Доступные команды:\n"
+            "/status - проверить текущий статус моста\n"
+            "/train - начать режим обучения\n"
+            "/stop_training - закончить режим обучения\n"
+            "/help - показать это сообщение"
+        )
+
+    async def check_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Проверка текущего статуса моста"""
+        try:
+            frame = await self.detector.capture_frame()
+            if frame is None:
+                await update.message.reply_text("Не удалось получить кадр с камеры")
+                return
+
+            # Сохраняем кадр во временную директорию
+            temp_path = TEMP_DIR / f"status_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+            cv2.imwrite(str(temp_path), frame)
+
+            # Делаем предсказание
+            results = self.detector.model.predict(
+                source=str(temp_path),
+                conf=CONFIDENCE_THRESHOLD,
+                iou=IOU_THRESHOLD
+            )
+
+            # Получаем результаты
+            result = results[0]
+            if len(result.boxes) > 0:
+                # Получаем класс с наибольшей уверенностью
+                confidences = result.boxes.conf.cpu().numpy()
+                classes = result.boxes.cls.cpu().numpy()
+                max_conf_idx = confidences.argmax()
+                
+                class_id = int(classes[max_conf_idx])
+                confidence = confidences[max_conf_idx]
+                
+                status = "открыт" if class_id == 1 else "закрыт"
+                await update.message.reply_text(
+                    f"Статус моста: {status}\n"
+                    f"Уверенность: {confidence:.2%}"
+                )
+            else:
+                await update.message.reply_text(
+                    "Не удалось определить статус моста на изображении"
+                )
+
+            # Отправляем изображение
+            await update.message.reply_photo(temp_path.open('rb'))
+
+        except Exception as e:
+            self.logger.error(f"Ошибка при проверке статуса: {str(e)}")
+            await update.message.reply_text(f"Произошла ошибка: {str(e)}")
+        finally:
+            # Удаляем временный файл
+            if 'temp_path' in locals() and temp_path.exists():
+                temp_path.unlink()
+
+    async def start_training(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Начало режима обучения"""
+        self.detector.is_training_mode = True
+        await update.message.reply_text(
+            "Режим обучения активирован.\n"
+            "Теперь я буду сохранять все кадры для обучения.\n"
+            "Используйте /stop_training для завершения."
+        )
+
+    async def stop_training(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Завершение режима обучения"""
+        if not self.detector.is_training_mode:
+            await update.message.reply_text("Режим обучения не был активирован.")
+            return
+
+        try:
+            self.detector.is_training_mode = False
+            await update.message.reply_text(
+                "Режим обучения завершен.\n"
+                "Начинаю процесс обучения модели..."
+            )
+            
+            # Запускаем обучение в фоновом режиме
+            asyncio.create_task(self._train_model(update))
+            
+        except Exception as e:
+            self.logger.error(f"Ошибка при остановке режима обучения: {str(e)}")
+            await update.message.reply_text(f"Произошла ошибка: {str(e)}")
+
+    async def _train_model(self, update: Update):
+        """Фоновая задача для обучения модели"""
+        try:
+            # Подготовка данных
+            self.detector._prepare_training_data()
+            
+            # Создаем директорию для результатов
+            run_dir = OUTPUT_DIR / f"train_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            run_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Создаем data.yaml
+            yaml_content = {
+                'path': str(DATASET_DIR),
+                'train': 'train',
+                'val': 'val',
+                'names': {
+                    0: 'bridge_closed',
+                    1: 'bridge_open'
+                }
+            }
+            
+            data_yaml_path = run_dir / "data.yaml"
+            with open(data_yaml_path, 'w') as f:
+                yaml.dump(yaml_content, f)
+            
+            # Запускаем обучение
+            self.detector.model.train(
+                data=str(data_yaml_path),
+                epochs=100,
+                imgsz=640,
+                batch=16,
+                patience=10,
+                save=True,
+                project=str(run_dir),
+                name="train",
+                exist_ok=True
+            )
+            
+            # Копируем лучшую модель
+            best_model = run_dir / "train" / "weights" / "best.pt"
+            if best_model.exists():
+                shutil.copy(best_model, MODELS_DIR / "best.pt")
+                await update.message.reply_text("Обучение завершено успешно! Модель обновлена.")
+            else:
+                await update.message.reply_text("Обучение завершено, но лучшая модель не найдена.")
+                
+        except Exception as e:
+            self.logger.error(f"Ошибка при обучении модели: {str(e)}")
+            await update.message.reply_text(f"Ошибка при обучении модели: {str(e)}")
+
+    async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработка текстовых сообщений"""
+        text = update.message.text.lower()
+        if text == "проверить статус":
+            await self.check_status(update, context)
+        elif text == "помощь":
+            await self.help(update, context)
+        else:
+            await update.message.reply_text(
+                "Извините, я не понимаю эту команду.\n"
+                "Используйте кнопки или /help для списка команд."
+            )
+
 def retry_on_exception(retries: int = 3, delay: float = 1.0):
     """Декоратор для повторных попыток выполнения функции при ошибках"""
     def decorator(func):
@@ -325,105 +494,6 @@ def retry_on_exception(retries: int = 3, delay: float = 1.0):
             raise last_exception
         return wrapper
     return decorator
-
-    @retry_on_exception(retries=3, delay=1.0)
-    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Обработчик команды /start"""
-        keyboard = [
-            [KeyboardButton("Проверить статус моста")],
-            [KeyboardButton("Помощь")]
-        ]
-        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-        await update.message.reply_text(
-            "Привет! Я бот для определения статуса моста. Выберите действие:",
-            reply_markup=reply_markup
-        )
-
-    @retry_on_exception(retries=3, delay=1.0)
-    async def help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Обработчик команды помощи"""
-        help_text = """
-Доступные команды:
-/start - Начать работу с ботом
-/help - Показать это сообщение
-/check - Проверить статус моста
-/train_start - Начать режим обучения (только для администраторов)
-/train_stop - Закончить режим обучения (только для администраторов)
-        """
-        await update.message.reply_text(help_text)
-
-    @retry_on_exception(retries=3, delay=1.0)
-    async def check_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Проверка текущего статуса моста"""
-        try:
-            frame = await self.detector.capture_frame()
-            if frame is None:
-                await update.message.reply_text("Не удалось получить изображение с камеры")
-                return
-            
-            # Сохранение временного изображения
-            temp_path = TEMP_DIR / f"status_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
-            cv2.imwrite(str(temp_path), frame)
-            
-            # Получение предсказания
-            results = self.detector.model.predict(
-                source=str(temp_path),
-                conf=CONFIDENCE_THRESHOLD,
-                iou=IOU_THRESHOLD
-            )
-            
-            # Обработка результатов
-            if len(results) > 0 and len(results[0].boxes) > 0:
-                box = results[0].boxes[0]
-                class_id = int(box.cls[0])
-                confidence = float(box.conf[0])
-                
-                status = "закрыт" if class_id == 0 else "открыт"
-                await update.message.reply_photo(
-                    photo=open(temp_path, 'rb'),
-                    caption=f"Статус моста: {status} (уверенность: {confidence:.2%})"
-                )
-            else:
-                await update.message.reply_text("Не удалось определить статус моста")
-            
-            # Очистка временных файлов
-            temp_path.unlink()
-        except Exception as e:
-            self.logger.error(f"Ошибка при проверке статуса: {str(e)}\n{traceback.format_exc()}")
-            await update.message.reply_text("Произошла ошибка при проверке статуса моста")
-
-    async def start_training(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Начало режима обучения"""
-        self.detector.is_training_mode = True
-        await update.message.reply_text(
-            "Режим обучения активирован. Отправьте фотографию моста, "
-            "и я помогу вам разметить данные для обучения."
-        )
-
-    async def stop_training(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Завершение режима обучения"""
-        try:
-            self.detector.is_training_mode = False
-            await update.message.reply_text("Начинаю процесс обучения модели...")
-            
-            success = await self.detector.train_model()
-            if success:
-                await update.message.reply_text("Обучение модели успешно завершено!")
-            else:
-                await update.message.reply_text("Произошла ошибка при обучении модели")
-        except Exception as e:
-            self.logger.error(f"Ошибка при остановке обучения: {str(e)}\n{traceback.format_exc()}")
-            await update.message.reply_text("Произошла ошибка при завершении обучения")
-
-    async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Обработка текстовых сообщений"""
-        text = update.message.text.lower()
-        if text == "проверить статус моста":
-            await self.check_status(update, context)
-        elif text == "помощь":
-            await self.help(update, context)
-        else:
-            await update.message.reply_text("Извините, я не понимаю эту команду")
 
 def setup_commands(application: Application):
     """Настройка команд бота"""

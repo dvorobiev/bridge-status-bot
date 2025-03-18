@@ -1,6 +1,0 @@
-names:
-  0: bridge_closed
-  1: bridge_open
-path: /Users/dvorobiev/Northern yellow white-eye/bridge_detector_v2/dataset
-train: train
-val: val

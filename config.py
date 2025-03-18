@@ -7,7 +7,7 @@ load_dotenv()
 
 # Пути к директориям
 BASE_DIR = Path(__file__).parent
-BRIDGE_DETECTOR_DIR = BASE_DIR / "bridge_detector_v2"
+BRIDGE_DETECTOR_DIR = BASE_DIR / "detector"
 
 # Основные директории проекта
 MODELS_DIR = BRIDGE_DETECTOR_DIR / "models"          # Все модели только здесь
