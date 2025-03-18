@@ -12,6 +12,7 @@ import yaml
 from typing import Optional, Dict, List
 from logging.handlers import RotatingFileHandler
 import time
+import asyncio
 from functools import wraps
 import traceback
 
@@ -521,11 +522,27 @@ async def main():
         
         # Запуск бота
         logger.info("Бот запущен")
-        await application.run_polling()
+        await application.initialize()
+        await application.start()
+        await application.updater.start_polling()
+        
+        # Ожидаем сигнала остановки
+        stop_signal = asyncio.Future()
+        await stop_signal
+        
     except Exception as e:
         logger.error(f"Критическая ошибка: {str(e)}\n{traceback.format_exc()}")
         raise
+    finally:
+        # Корректное завершение работы
+        if 'application' in locals():
+            await application.stop()
+            await application.shutdown()
 
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("Бот остановлен пользователем")
+    except Exception as e:
+        print(f"Критическая ошибка: {str(e)}")
