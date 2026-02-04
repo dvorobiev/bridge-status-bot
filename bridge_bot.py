@@ -6,27 +6,22 @@ Telegram-бот для мониторинга понтонного моста.
 
 import os
 import io
-import asyncio
 import logging
 import subprocess
-import tempfile
 from datetime import datetime
 from dotenv import load_dotenv
 import httpx
 import re
 
-# Import for backward compatibility - future versions should use google.genai
 import google.generativeai as genai
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
 # Загружаем переменные окружения
 load_dotenv()
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-CAMERA_URL = os.getenv("CAMERA_URL")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", 5))  # минуты
 
 # Настройка логирования
 logging.basicConfig(
@@ -39,11 +34,6 @@ logger = logging.getLogger(__name__)
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel("gemini-2.5-flash")
 
-# Глобальное состояние
-last_status = None
-subscribers = set()  # chat_id подписчиков на уведомления
-
-
 # Настройки камеры rtsp.me (Митяевский мост)
 RTSP_ME_EMBED_URL = "https://rtsp.me/embed/yEDF9iDT/"
 
@@ -54,7 +44,6 @@ def get_rtspme_stream_url() -> str | None:
         with httpx.Client(timeout=15, verify=False) as client:
             response = client.get(RTSP_ME_EMBED_URL, headers={"User-Agent": "Mozilla/5.0"})
             if response.status_code == 200:
-                # Ищем m3u8 URL в HTML
                 match = re.search(r'https://msk\.rtsp\.me/[^"\']+\.m3u8[^"\']*', response.text)
                 if match:
                     return match.group(0)
@@ -66,7 +55,6 @@ def get_rtspme_stream_url() -> str | None:
 def capture_frame() -> bytes | None:
     """Захватывает кадр с камеры rtsp.me через ffmpeg."""
     try:
-        # Получаем актуальный URL потока
         stream_url = get_rtspme_stream_url()
         if not stream_url:
             logger.error("Failed to get stream URL from rtsp.me")
@@ -74,7 +62,6 @@ def capture_frame() -> bytes | None:
 
         logger.info(f"Capturing frame from: {stream_url[:60]}...")
 
-        # Захватываем кадр через ffmpeg
         cmd = [
             "ffmpeg",
             "-y",
@@ -127,7 +114,6 @@ def analyze_bridge(image_bytes: bytes) -> dict:
         response = model.generate_content([prompt, image_part])
         text = response.text.strip().upper()
 
-        # Парсим ответ
         result = {"bridge": "НЕИЗВЕСТНО", "traffic_light": "НЕ_ВИДНО", "timer": None}
 
         for line in text.split("\n"):
@@ -144,7 +130,6 @@ def analyze_bridge(image_bytes: bytes) -> dict:
                 elif "ЗЕЛЁН" in line or "ЗЕЛЕН" in line:
                     result["traffic_light"] = "ЗЕЛЁНЫЙ"
             elif "ТАЙМЕР:" in line:
-                # Извлекаем число из строки
                 numbers = re.findall(r'\d+', line)
                 if numbers:
                     result["timer"] = int(numbers[0])
@@ -167,7 +152,6 @@ def format_status(result: dict, now: str) -> str:
     light = result.get("traffic_light", "НЕ_ВИДНО")
     timer = result.get("timer")
 
-    # Эмодзи для моста
     if bridge == "СВЕДЁН":
         bridge_line = "🟢 Мост СВЕДЁН — проезд открыт"
     elif bridge == "РАЗВЕДЁН":
@@ -175,7 +159,6 @@ def format_status(result: dict, now: str) -> str:
     else:
         bridge_line = "⚪ Мост: статус неизвестен"
 
-    # Эмодзи для светофора
     light_emoji = {"КРАСНЫЙ": "🔴", "ЖЁЛТЫЙ": "🟡", "ЗЕЛЁНЫЙ": "🟢"}.get(light, "⚫")
     if light == "НЕ_ВИДНО":
         light_line = "🚦 Светофор: не видно"
@@ -189,21 +172,13 @@ def format_status(result: dict, now: str) -> str:
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /start."""
-    # Инлайн-кнопки (работают и в группах)
     inline_keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🌉 Проверить мост", callback_data="check_status")],
-        [
-            InlineKeyboardButton("🔔 Подписаться", callback_data="subscribe"),
-            InlineKeyboardButton("🔕 Отписаться", callback_data="unsubscribe"),
-        ],
     ])
 
     await update.message.reply_text(
         "🌉 Бот мониторинга Митяевского моста\n\n"
-        "Нажмите кнопку или используйте команды:\n"
-        "/status — текущий статус моста\n"
-        "/subscribe — подписаться на уведомления\n"
-        "/unsubscribe — отписаться",
+        "Нажмите кнопку или команду /status",
         reply_markup=inline_keyboard
     )
 
@@ -212,7 +187,6 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /status — показывает текущий статус моста."""
     msg = await update.message.reply_text("📷 Получаю кадр с камеры...")
 
-    # Захватываем кадр
     image_bytes = capture_frame()
     if not image_bytes:
         await msg.edit_text("❌ Не удалось получить кадр с камеры")
@@ -220,55 +194,32 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await msg.edit_text("🤖 Анализирую изображение...")
 
-    # Анализируем через Gemini
     result = analyze_bridge(image_bytes)
     now = datetime.now().strftime("%H:%M:%S")
     text = format_status(result, now)
 
-    # Удаляем сообщение о статусе
     await msg.delete()
 
-    # Inline-кнопка для обновления
     inline_keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🔄 Обновить", callback_data="refresh_status")]
     ])
 
-    # Отправляем фото с результатом
     await update.message.reply_photo(
         photo=io.BytesIO(image_bytes),
         caption=text,
-        parse_mode=None,  # Отключаем Markdown, чтобы избежать проблем с форматированием
+        parse_mode=None,
         reply_markup=inline_keyboard
     )
-
-
-async def cmd_subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Подписаться на уведомления об изменении статуса."""
-    chat_id = update.effective_chat.id
-    subscribers.add(chat_id)
-    await update.message.reply_text(
-        f"✅ Вы подписаны на уведомления\n"
-        f"Проверка каждые {CHECK_INTERVAL} минут"
-    )
-
-
-async def cmd_unsubscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Отписаться от уведомлений."""
-    chat_id = update.effective_chat.id
-    subscribers.discard(chat_id)
-    await update.message.reply_text("❌ Вы отписаны от уведомлений")
 
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка нажатий на inline-кнопки."""
     query = update.callback_query
-    await query.answer()  # Убираем "часики" на кнопке
+    await query.answer()
 
     if query.data in ("check_status", "refresh_status"):
-        # Отправляем сообщение о загрузке
         msg = await query.message.reply_text("📷 Получаю кадр с камеры...")
 
-        # Захватываем кадр
         image_bytes = capture_frame()
         if not image_bytes:
             await msg.edit_text("❌ Не удалось получить кадр с камеры")
@@ -276,14 +227,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await msg.edit_text("🤖 Анализирую изображение...")
 
-        # Анализируем через Gemini
         result = analyze_bridge(image_bytes)
         now = datetime.now().strftime("%H:%M:%S")
         text = format_status(result, now)
 
         await msg.delete()
 
-        # Inline-кнопка для обновления
         inline_keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("🔄 Обновить", callback_data="refresh_status")]
         ])
@@ -295,127 +244,32 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=inline_keyboard
         )
 
-    elif query.data == "subscribe":
-        chat_id = query.message.chat_id
-        if chat_id not in subscribers:
-            subscribers.add(chat_id)
-            await query.message.reply_text(
-                f"✅ Подписка оформлена!\n"
-                f"Проверка каждые {CHECK_INTERVAL} минут"
-            )
-        else:
-            await query.message.reply_text("Вы уже подписаны")
-
-    elif query.data == "unsubscribe":
-        chat_id = query.message.chat_id
-        if chat_id in subscribers:
-            subscribers.discard(chat_id)
-            await query.message.reply_text("❌ Вы отписаны от уведомлений")
-        else:
-            await query.message.reply_text("Вы не были подписаны")
-
-
-async def check_bridge_status(context: ContextTypes.DEFAULT_TYPE):
-    """Фоновая задача проверки статуса моста."""
-    global last_status
-
-    logger.info("Checking bridge status...")
-
-    image_bytes = capture_frame()
-    if not image_bytes:
-        logger.warning("Failed to capture frame for monitoring")
-        return
-
-    result = analyze_bridge(image_bytes)
-
-    # Пропускаем если ошибка
-    if "error" in result:
-        logger.warning(f"Analysis error: {result['error']}")
-        return
-
-    bridge = result.get("bridge", "НЕИЗВЕСТНО")
-    light = result.get("traffic_light", "НЕ_ВИДНО")
-
-    # Проверяем изменения
-    if last_status is not None:
-        old_bridge = last_status.get("bridge")
-        old_light = last_status.get("traffic_light")
-
-        # Уведомляем если изменился мост или светофор
-        bridge_changed = old_bridge != bridge and bridge != "НЕИЗВЕСТНО"
-        light_changed = old_light != light and light != "НЕ_ВИДНО" and old_light != "НЕ_ВИДНО"
-
-        if bridge_changed or light_changed:
-            now = datetime.now().strftime("%H:%M:%S")
-            text = "🚨 Изменение!\n" + format_status(result, now)
-
-            for chat_id in subscribers:
-                try:
-                    await context.bot.send_photo(
-                        chat_id=chat_id,
-                        photo=io.BytesIO(image_bytes),
-                        caption=text,
-                        parse_mode=None
-                    )
-                except Exception as e:
-                    logger.error(f"Failed to notify {chat_id}: {e}")
-
-    last_status = result
-    logger.info(f"Bridge: {bridge}, Light: {light}")
-
 
 def main():
     """Запуск бота."""
-    # Проверяем наличие всех ключей
     if not TELEGRAM_TOKEN:
         raise ValueError("TELEGRAM_TOKEN not set")
     if not GEMINI_API_KEY:
         raise ValueError("GEMINI_API_KEY not set")
 
-    # Создаём приложение с поддержкой JobQueue
     app = Application.builder().token(TELEGRAM_TOKEN).build()
 
-    # Регистрируем команды
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("status", cmd_status))
-    app.add_handler(CommandHandler("subscribe", cmd_subscribe))
-    app.add_handler(CommandHandler("unsubscribe", cmd_unsubscribe))
-
-    # Обработчик inline-кнопок
     app.add_handler(CallbackQueryHandler(handle_callback))
-    
-    # Устанавливаем команды бота для отображения в меню
-    from telegram import BotCommand
+
     commands = [
         BotCommand("start", "Начать работу с ботом"),
         BotCommand("status", "Проверить статус моста"),
-        BotCommand("subscribe", "Подписаться на уведомления"),
-        BotCommand("unsubscribe", "Отписаться от уведомлений"),
     ]
-    
-    # Регистрируем команды после запуска приложения
+
     async def setup_bot_commands(application):
         await application.bot.set_my_commands(commands)
         logger.info("Команды бота зарегистрированы")
-    
-    # Добавляем задачу на установку команд
+
     app.job_queue.run_once(setup_bot_commands, when=1)
-    
-    logger.info("Задача регистрации команд добавлена")
 
-    # Добавляем фоновую задачу мониторинга
-    if app.job_queue:
-        app.job_queue.run_repeating(
-            check_bridge_status,
-            interval=CHECK_INTERVAL * 60,  # минуты -> секунды
-            first=10  # первая проверка через 10 секунд
-        )
-    else:
-        logger.warning("JobQueue не доступен. Фоновый мониторинг не будет работать.")
-
-    logger.info(f"Bot started. Monitoring every {CHECK_INTERVAL} minutes.")
-
-    # Запускаем
+    logger.info("Bot started")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
