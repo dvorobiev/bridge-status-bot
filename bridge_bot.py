@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 # Настройка Gemini
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-2.5-flash")
+model = genai.GenerativeModel("gemini-2.5-flash-lite")
 
 # Настройки камеры rtsp.me (Митяевский мост)
 RTSP_ME_EMBED_URL = "https://rtsp.me/embed/yEDF9iDT/"
