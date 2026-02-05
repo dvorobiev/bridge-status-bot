@@ -32,7 +32,14 @@ logger = logging.getLogger(__name__)
 
 # Настройка Gemini
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-2.5-flash-lite")
+
+# Модели от продвинутой к простой (fallback при исчерпании квоты)
+GEMINI_MODELS = [
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-2.0-flash-lite",
+]
 
 # Настройки камеры rtsp.me (Митяевский мост)
 RTSP_ME_EMBED_URL = "https://rtsp.me/embed/yEDF9iDT/"
@@ -91,13 +98,12 @@ def capture_frame() -> bytes | None:
 
 def analyze_bridge(image_bytes: bytes) -> dict:
     """Отправляет изображение в Gemini и получает статус моста и светофора."""
-    try:
-        image_part = {
-            "mime_type": "image/jpeg",
-            "data": image_bytes
-        }
+    image_part = {
+        "mime_type": "image/jpeg",
+        "data": image_bytes
+    }
 
-        prompt = """Изображение с камеры понтонного моста. Справа виден светофор с цифровым табло.
+    prompt = """Изображение с камеры понтонного моста. Справа виден светофор с цифровым табло.
 
 Определи:
 1. Статус моста: СВЕДЁН (цельный, можно ехать) или РАЗВЕДЁН (есть разрыв)
@@ -109,36 +115,47 @@ def analyze_bridge(image_bytes: bytes) -> dict:
 СВЕТОФОР: цвет
 ТАЙМЕР: число (только цифры, например 45 или 120)"""
 
-        response = model.generate_content([prompt, image_part])
-        text = response.text.strip().upper()
+    # Пробуем модели от продвинутой к простой
+    for model_name in GEMINI_MODELS:
+        try:
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content([prompt, image_part])
+            text = response.text.strip().upper()
 
-        result = {"bridge": "НЕИЗВЕСТНО", "traffic_light": "НЕ_ВИДНО", "timer": None}
+            logger.info(f"Used model: {model_name}")
 
-        for line in text.split("\n"):
-            if "МОСТ:" in line:
-                if "СВЕДЁН" in line or "СВЕДЕН" in line:
-                    result["bridge"] = "СВЕДЁН"
-                elif "РАЗВЕДЁН" in line or "РАЗВЕДЕН" in line:
-                    result["bridge"] = "РАЗВЕДЁН"
-            elif "СВЕТОФОР:" in line:
-                if "КРАСН" in line:
-                    result["traffic_light"] = "КРАСНЫЙ"
-                elif "ЖЁЛТ" in line or "ЖЕЛТ" in line:
-                    result["traffic_light"] = "ЖЁЛТЫЙ"
-                elif "ЗЕЛЁН" in line or "ЗЕЛЕН" in line:
-                    result["traffic_light"] = "ЗЕЛЁНЫЙ"
-            elif "ТАЙМЕР:" in line:
-                numbers = re.findall(r'\d+', line)
-                if numbers:
-                    result["timer"] = int(numbers[0])
+            result = {"bridge": "НЕИЗВЕСТНО", "traffic_light": "НЕ_ВИДНО", "timer": None}
 
-        return result
+            for line in text.split("\n"):
+                if "МОСТ:" in line:
+                    if "СВЕДЁН" in line or "СВЕДЕН" in line:
+                        result["bridge"] = "СВЕДЁН"
+                    elif "РАЗВЕДЁН" in line or "РАЗВЕДЕН" in line:
+                        result["bridge"] = "РАЗВЕДЁН"
+                elif "СВЕТОФОР:" in line:
+                    if "КРАСН" in line:
+                        result["traffic_light"] = "КРАСНЫЙ"
+                    elif "ЖЁЛТ" in line or "ЖЕЛТ" in line:
+                        result["traffic_light"] = "ЖЁЛТЫЙ"
+                    elif "ЗЕЛЁН" in line or "ЗЕЛЕН" in line:
+                        result["traffic_light"] = "ЗЕЛЁНЫЙ"
+                elif "ТАЙМЕР:" in line:
+                    numbers = re.findall(r'\d+', line)
+                    if numbers:
+                        result["timer"] = int(numbers[0])
 
-    except Exception as e:
-        logger.error(f"Gemini error: {e}")
-        if "quota" in str(e).lower() or "rate limit" in str(e).lower() or "429" in str(e).lower():
-            return {"error": "Превышена квота API"}
-        return {"error": str(e)[:50]}
+            return result
+
+        except Exception as e:
+            err_str = str(e).lower()
+            if "quota" in err_str or "rate limit" in err_str or "429" in err_str:
+                logger.warning(f"{model_name}: quota exceeded, trying next...")
+                continue
+            else:
+                logger.error(f"Gemini error ({model_name}): {e}")
+                return {"error": str(e)[:50]}
+
+    return {"error": "Все модели исчерпали квоту"}
 
 
 def format_status(result: dict, now: str) -> str:
@@ -159,11 +176,11 @@ def format_status(result: dict, now: str) -> str:
 
     light_emoji = {"КРАСНЫЙ": "🔴", "ЖЁЛТЫЙ": "🟡", "ЗЕЛЁНЫЙ": "🟢"}.get(light, "⚫")
     if light == "НЕ_ВИДНО":
-        light_line = "🚦 Светофор: не видно"
+        light_line = "🚦 Светофор: ?"
     elif timer:
-        light_line = f"🚦 Светофор: {light_emoji} {light} ({timer} сек)"
+        light_line = f"🚦 Светофор: {light_emoji} {timer} сек"
     else:
-        light_line = f"🚦 Светофор: {light_emoji} {light}"
+        light_line = f"🚦 Светофор: {light_emoji}"
 
     return f"{bridge_line}\n{light_line}\n🕐 {now}"
 
