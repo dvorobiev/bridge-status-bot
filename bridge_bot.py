@@ -45,55 +45,61 @@ GEMINI_MODELS = [
 RTSP_ME_EMBED_URL = "https://rtsp.me/embed/yEDF9iDT/"
 
 
-def get_rtspme_stream_url() -> str | None:
-    """Получает актуальный m3u8 URL из rtsp.me embed страницы."""
+def get_rtspme_stream_url() -> tuple[str | None, str | None]:
+    """Получает актуальный m3u8 URL из rtsp.me embed страницы.
+    Возвращает (url, error_message)."""
     try:
         with httpx.Client(timeout=15, verify=False) as client:
             response = client.get(RTSP_ME_EMBED_URL, headers={"User-Agent": "Mozilla/5.0"})
-            if response.status_code == 200:
-                match = re.search(r'https://msk\.rtsp\.me/[^"\']+\.m3u8[^"\']*', response.text)
-                if match:
-                    return match.group(0)
+            if response.status_code != 200:
+                return None, f"HTTP {response.status_code} при обращении к rtsp.me"
+            match = re.search(r'https://msk\.rtsp\.me/[^"\']+\.m3u8[^"\']*', response.text)
+            if match:
+                return match.group(0), None
+            return None, "Ссылка на поток не найдена на странице rtsp.me"
+    except httpx.TimeoutException:
+        return None, "Таймаут подключения к rtsp.me (15с)"
     except Exception as e:
-        logger.error(f"Failed to get rtsp.me stream URL: {e}")
-    return None
+        return None, f"{type(e).__name__}: {e}"
 
 
-def capture_frame() -> bytes | None:
-    """Захватывает кадр с камеры rtsp.me через ffmpeg."""
+def capture_frame() -> tuple[bytes | None, str | None]:
+    """Захватывает кадр с камеры rtsp.me через ffmpeg.
+    Возвращает (image_bytes, error_message)."""
+    stream_url, err = get_rtspme_stream_url()
+    if not stream_url:
+        logger.error(f"Failed to get stream URL: {err}")
+        return None, err or "Не удалось получить URL потока"
+
+    logger.info(f"Capturing frame from: {stream_url[:60]}...")
+
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i", stream_url,
+        "-frames:v", "1",
+        "-f", "image2pipe",
+        "-vcodec", "mjpeg",
+        "-q:v", "2",
+        "pipe:1"
+    ]
     try:
-        stream_url = get_rtspme_stream_url()
-        if not stream_url:
-            logger.error("Failed to get stream URL from rtsp.me")
-            return None
-
-        logger.info(f"Capturing frame from: {stream_url[:60]}...")
-
-        cmd = [
-            "ffmpeg",
-            "-y",
-            "-i", stream_url,
-            "-frames:v", "1",
-            "-f", "image2pipe",
-            "-vcodec", "mjpeg",
-            "-q:v", "2",
-            "pipe:1"
-        ]
         result = subprocess.run(cmd, capture_output=True, timeout=30)
 
         if result.returncode == 0 and result.stdout:
             logger.info(f"Frame captured: {len(result.stdout)} bytes")
-            return result.stdout
+            return result.stdout, None
 
-        logger.error(f"ffmpeg error: {result.stderr.decode()[:200]}")
-        return None
+        stderr = result.stderr.decode(errors="replace")[:300]
+        logger.error(f"ffmpeg error: {stderr}")
+        return None, f"ffmpeg код {result.returncode}: {stderr}"
 
     except subprocess.TimeoutExpired:
         logger.error("ffmpeg timeout")
-        return None
+        return None, "Таймаут захвата кадра ffmpeg (30с)"
     except Exception as e:
         logger.error(f"Capture error: {e}")
-        return None
+        return None, f"{type(e).__name__}: {e}"
 
 
 def analyze_bridge(image_bytes: bytes) -> dict:
@@ -202,9 +208,15 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /status — показывает текущий статус моста."""
     msg = await update.message.reply_text("📷 Получаю кадр с камеры...")
 
-    image_bytes = capture_frame()
+    image_bytes, capture_error = capture_frame()
     if not image_bytes:
-        await msg.edit_text("❌ Не удалось получить кадр с камеры")
+        now = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+        await msg.edit_text(
+            f"❌ Не удалось получить кадр с камеры\n"
+            f"📷 Источник: {RTSP_ME_EMBED_URL}\n"
+            f"🕐 Время: {now}\n"
+            f"⚠️ Причина: {capture_error}"
+        )
         return
 
     await msg.edit_text("🤖 Анализирую изображение...")
@@ -235,9 +247,15 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query.data in ("check_status", "refresh_status"):
         msg = await query.message.reply_text("📷 Получаю кадр с камеры...")
 
-        image_bytes = capture_frame()
+        image_bytes, capture_error = capture_frame()
         if not image_bytes:
-            await msg.edit_text("❌ Не удалось получить кадр с камеры")
+            now = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+            await msg.edit_text(
+                f"❌ Не удалось получить кадр с камеры\n"
+                f"📷 Источник: {RTSP_ME_EMBED_URL}\n"
+                f"🕐 Время: {now}\n"
+                f"⚠️ Причина: {capture_error}"
+            )
             return
 
         await msg.edit_text("🤖 Анализирую изображение...")
